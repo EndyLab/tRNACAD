@@ -5,6 +5,10 @@ import math
 import pickle as pkl
 import glob
 import matplotlib.pyplot as plt
+import random
+import gc
+from joblib import Parallel, delayed
+import multiprocessing   
 
 
 def computeTransportRxnTimes(path,expt_start,expt_end,avg=False, cogtRNANum = 1, ribosomeNum = 1, scaling=1, NR_scaling = {'k1r':718.0,'k2f':1475.0,'k2r_nr':1120.0,'k3_nr':6.0,'k4':209.0}):
@@ -34,7 +38,7 @@ def computeTransportRxnTimes(path,expt_start,expt_end,avg=False, cogtRNANum = 1,
     ribosome_reaction_time = list()
     print("Computing...") 
     NR_tRNA = int(round(8/42*(42-(cogtRNANum-2))))+(ribosomeNum-1) #Non-matching ribosomes make up the first ribosomeNum-1 labels
-    NR_SCALINGFACTOR = computeNRLatency(NR_scaling)/(1000/NR_scaling['k1r']) #Scaling factor for how much slower near cognate mismatch reactions are compared to non cognate mismatches
+    NR_SCALINGFACTOR = 3.3 #computeNRLatency(NR_scaling)/(1000/NR_scaling['k1r']) #Scaling factor for how much slower near cognate mismatch reactions are compared to non cognate mismatches
     reactantarray = list()
     #scaling = scaling*(8/40*4.6+32/40*1.4)/1.4 ##Adjust scaling to account for near-cognate ternary complexes
     for expt_num, row in df_outputs.iterrows():
@@ -410,7 +414,7 @@ def nearcognateDistrib(ptRNA,pCodon):
     codon_count_hist_weighted_avg = np.zeros(42)
     p_codon_tRNA = {}
 
-    np.random.seed(0)
+    #np.random.seed(0)
 
     for key in codon_dict:
         codon_count[key] = []
@@ -462,7 +466,6 @@ def nearcognateDistrib(ptRNA,pCodon):
     return p_codon_count_hist_weighted_avg
 
 
-
 class CellLatencies:
     def __init__ (self,TransportRxnTimesarr,bootstrap=True):
         self.transportT = [i for trans_i in TransportRxnTimesarr[0] for i in trans_i]
@@ -477,3 +480,96 @@ class CellLatencies:
         self.std_transportT = np.std(self.transportT)/np.sqrt(len(self.transportT)-1)
         self.std_searchT = np.std(self.searchT)/np.sqrt(len(self.searchT)-1)
         self.std_rxnT = np.std(self.rxnT)/np.sqrt(len(self.rxnT)-1)
+
+
+
+
+#Input: tRNA and codon probability distributions as well as a dictionary
+#of ensemble latency dictionaries
+#Returns: Elongation latencies and standard errors for each input growth rate
+def computeElongationLatency(ptRNA,pCodon,ensmbl_latency_dict):
+    rxndiff=dict()
+    transportRxnResults = transportRxnCalc(ptRNA,pCodon,ensmbl_latency_dict)
+    rxndiff['30'] = transportRxnResults[1:]
+    
+    #The added scalar values are the average reaction latencies following succesful reaction
+    return([rxndiff[d][2][0]+(1000/1475+1000/1529+1000/209+1000/200+1000/32) for d in rxndiff],[rxndiff[d][5][0] for d in rxndiff])
+
+
+def computeElongationLatency_multithread(input):
+    ptRNA = input[0]
+    pCodon = input[1]
+    ensmbl_latency_dict = input[2]
+    transportRxnResults = transportRxnCalc(ptRNA,pCodon,ensmbl_latency_dict)
+    
+    rxndiff=dict()
+    rxndiff['30'] = transportRxnResults[1:]
+    return([rxndiff[d][2][0]+(1000/1475+1000/1529+1000/209+1000/200+1000/32) for d in rxndiff],[rxndiff[d][5][0] for d in rxndiff])
+
+def run_ga_tRNA(codon_list,elong_list,tRNA_list,gr_dict,minRange,maxRange,objective='fast'):
+    num_cores = 16
+
+    #### Compute fitness
+    if objective == 'fast':
+        fitness = (1/np.array(elong_list))/sum((1/np.array(elong_list)))
+    elif objective == 'slow':
+        fitness = (np.array(elong_list))/sum((np.array(elong_list)))
+
+    #### Number of candidates n removing as well as n mating to create n offspring
+    n = 10
+    #### Identify the least fit candidates from the population
+    cull_indices = np.argpartition(fitness, n)[:n]
+
+    #### Choose parents based on weighting fitness
+    import random
+    parent_indices = np.argpartition(fitness, n)[-n:]
+    tRNA_list=np.array(tRNA_list)
+    parents = tRNA_list[parent_indices]
+
+    #### Mate k random pairs of 2 without replacement and renormalize
+    k=5
+    couples = np.random.choice(np.arange(len(parents)), size = (k,2),replace=False)
+    recombination_rate = 0.1
+    mutation_rate  = 0.05
+
+    recombined_children = list()
+    recombined_children_elongt = list()
+    for couple_index in couples:
+        couple = parents[couple_index]
+        recombination_num = int(len(couple[0])*recombination_rate)
+        recombination_locs = np.random.choice(len(couple[0]),recombination_num)
+        recombination_values_0 = couple[0][recombination_locs] 
+        couple[0][recombination_locs] = couple[1][recombination_locs]
+        couple[1][recombination_locs] = recombination_values_0
+        
+        #### Mutate children
+        mutation_num = int(len(couple[0])*mutation_rate)
+        recombination_locs = np.random.choice(len(couple[0]),mutation_num)
+        couple[0][recombination_locs] = np.random.uniform(minRange,maxRange,mutation_num)
+        couple[1][recombination_locs] = np.random.uniform(minRange,maxRange,mutation_num)
+        
+        ### Re-normalize each recombined children
+        child_0 = couple[0]/np.sum(couple[0])
+        child_1 = couple[1]/np.sum(couple[1])
+        
+        ### Add children to list
+        recombined_children.append(list(child_0))
+        recombined_children.append(list(child_1))
+        
+    #### Compute elong_t of the recombined children, multithreaded
+    inputs=[[recombined_children[i],codon_list,gr_dict] for i in np.arange(len(couples)*2)]
+    a = Parallel(n_jobs=num_cores,backend='loky')(delayed(computeElongationLatency_multithread)(i) for i in inputs)
+    for _,items in enumerate(a):
+        recombined_children_elongt.append(items[0][0])
+#    del(a)
+#    gc.collect()
+    
+    #### Have recombined children and their elong_t replaced culled candidates
+    tRNA_list[cull_indices] = recombined_children
+    elong_list[cull_indices] = recombined_children_elongt
+    return fitness, tRNA_list, elong_list
+
+def calc_R2(x,y,y_hat):
+    SS_err = np.sum((y-y_hat)**2) # Sum of squared errors
+    SS_tot = np.sum((y-np.average(y))**2) #Sum of squares total (proportional to variance; n times larger than variance)
+    return 1-SS_err/SS_tot
