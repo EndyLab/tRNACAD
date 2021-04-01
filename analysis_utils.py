@@ -506,7 +506,7 @@ def computeElongationLatency_multithread(input):
     rxndiff['30'] = transportRxnResults[1:]
     return([rxndiff[d][2][0]+(1000/1475+1000/1529+1000/209+1000/200+1000/32) for d in rxndiff],[rxndiff[d][5][0] for d in rxndiff])
 
-def run_ga_tRNA(codon_list,elong_list,tRNA_list,gr_dict,minRange,maxRange,objective='fast'):
+def run_ga_tRNA(tRNA_list,codon_list,elong_list,ensmbl_latency_dict,minRange,maxRange,objective='fast'):
     num_cores = 16
 
     #### Compute fitness
@@ -521,7 +521,6 @@ def run_ga_tRNA(codon_list,elong_list,tRNA_list,gr_dict,minRange,maxRange,object
     cull_indices = np.argpartition(fitness, n)[:n]
 
     #### Choose parents based on weighting fitness
-    import random
     parent_indices = np.argpartition(fitness, n)[-n:]
     tRNA_list=np.array(tRNA_list)
     parents = tRNA_list[parent_indices]
@@ -557,9 +556,9 @@ def run_ga_tRNA(codon_list,elong_list,tRNA_list,gr_dict,minRange,maxRange,object
         recombined_children.append(list(child_1))
         
     #### Compute elong_t of the recombined children, multithreaded
-    inputs=[[recombined_children[i],codon_list,gr_dict] for i in np.arange(len(couples)*2)]
-    a = Parallel(n_jobs=num_cores,backend='loky')(delayed(computeElongationLatency_multithread)(i) for i in inputs)
-    for _,items in enumerate(a):
+    inputs=[[recombined_children[i],codon_list,ensmbl_latency_dict] for i in np.arange(len(couples)*2)]
+    parallel_elong = Parallel(n_jobs=num_cores,backend='loky')(delayed(computeElongationLatency_multithread)(i) for i in inputs)
+    for _,items in enumerate(parallel_elong):
         recombined_children_elongt.append(items[0][0])
 #    del(a)
 #    gc.collect()
@@ -568,6 +567,87 @@ def run_ga_tRNA(codon_list,elong_list,tRNA_list,gr_dict,minRange,maxRange,object
     tRNA_list[cull_indices] = recombined_children
     elong_list[cull_indices] = recombined_children_elongt
     return fitness, tRNA_list, elong_list
+
+def run_ga_CodonSweep(tRNA_list,codon_list,elong_list,ensmbl_latency_dict,minRange,maxRange,objective='fast', 
+    syn_codon_list = [[0,1,2,3],[4,5],[6,7],[8,9,10,11],[12,13,14,15],[16,17,46,47,48,49],[18,19,42,43,44,45],\
+    [20,21],[22,23],[24],[25,26,27],[28,29,30,31],[32],[33],[34,35],[36,37],[38,39,54,55,56,57],[40,41],\
+    [50,51],[52,53],[58,59,60,61]],\
+    pCodon = [2.36, 1.26, 45.55, 34.17, 16.97, 57.86, 19.27, 33.74, 14.98, 22.31, 43.18, 7.67, \
+    24.11, 24.87, 39.49, 11.81, 0.03, 0.63, 2.19, 9.31, 17.22, 55.01, 5.61, 29.21, 21.67, 0.52, 15.79, \
+    43.86, 4.17, 2.61, 20.64, 26.7, 7.03, 0.19, 2.76, 3.81, 6.72, 16.52, 4.27, 2.73, 7.92, 23.25, 2.51,\
+    1.98, 16.33, 11.68, 0.62, 0.67, 43.82, 20.59, 27.28, 7.01, 6.78, 14.21, 60.75, 0.82, 3.86, 4.09, \
+    28.82, 5.18, 4.38, 1.09]):
+    num_cores = 16
+
+    #### Compute fitness
+    if objective == 'fast':
+        fitness = (1/np.array(elong_list))/sum((1/np.array(elong_list)))
+    elif objective == 'slow':
+        fitness = (np.array(elong_list))/sum((np.array(elong_list)))
+
+    #### Number of candidates n removing as well as n mating to create n offspring
+    n = 10
+
+    #### Identify the least fit candidates from the population
+    cull_indices = np.argpartition(fitness, n)[:n]
+
+    #### Choose parents based on weighting fitness
+    import random
+    #parent_indices = np.array(random.choices(np.arange(len(p_tRNA_list)), fitness, k=10))
+    parent_indices = np.argpartition(fitness, n)[-n:]
+    codon_list=np.array(codon_list)
+    parents = codon_list[parent_indices]
+
+    #### Mate k random pairs of 2 without replacement and renormalize
+    k=5
+    couples = np.random.choice(np.arange(len(parents)), size = (k,2),replace=False)
+    recombination_rate = 0.1
+    mutation_rate  = 0.05
+
+    recombined_children = list()
+    recombined_children_elongt = list()
+    
+    
+    for couple_index in couples:
+        couple = parents[couple_index]
+        recombination_num = int(len(couple[0])*recombination_rate)
+        recombination_locs = np.random.choice(len(couple[0]),recombination_num)
+        recombination_values_0 = couple[0][recombination_locs] 
+        couple[0][recombination_locs] = couple[1][recombination_locs]
+        couple[1][recombination_locs] = recombination_values_0
+        
+        #### Mutate children
+        mutation_num = int(len(couple[0])*mutation_rate)
+        recombination_locs = np.random.choice(len(couple[0]),mutation_num)
+        couple[0][recombination_locs] = np.random.uniform(minRange,maxRange,mutation_num)
+        couple[1][recombination_locs] = np.random.uniform(minRange,maxRange,mutation_num)
+        
+        ### Re-normalize each recombined children
+        ##First re-normalize to make sure synonymous codons have, together, the same total frequency (keep the genome the same)
+        pCodon = np.array(pCodon)/np.sum(np.array(pCodon))
+
+        syn_codon_freqs = list()
+        for syn_codons in syn_codon_list:
+            syn_codon_freqs.append(sum(pCodon[syn_codons]))
+            couple[0][syn_codons] = sum(pCodon[syn_codons])/sum(couple[0][syn_codons])*couple[0][syn_codons]
+            couple[1][syn_codons] = sum(pCodon[syn_codons])/sum(couple[1][syn_codons])*couple[1][syn_codons]
+        child_0 = couple[0]/np.sum(couple[0])
+        child_1 = couple[1]/np.sum(couple[1])
+        
+        ### Add children to list
+        recombined_children.append(list(child_0))
+        recombined_children.append(list(child_1))
+        
+    #### Compute elong_t of the recombined children, multithreaded
+    inputs=[[tRNA_list,recombined_children[i],ensmbl_latency_dict] for i in np.arange(len(couples)*2)]
+    parallel_elong = Parallel(n_jobs=num_cores,backend='loky')(delayed(computeElongationLatency_multithread)(i) for i in inputs)
+    for _,items in enumerate(parallel_elong):
+        recombined_children_elongt.append(items[0][0])
+    
+    #### Have recombined children and their elong_t replaced culled candidates
+    codon_list[cull_indices] = recombined_children
+    elong_list[cull_indices] = recombined_children_elongt
+    return fitness, codon_list, elong_list
 
 def calc_R2(x,y,y_hat):
     SS_err = np.sum((y-y_hat)**2) # Sum of squared errors
