@@ -506,7 +506,7 @@ def computeElongationLatency_multithread(input):
     rxndiff['30'] = transportRxnResults[1:]
     return([rxndiff[d][2][0]+(1000/1475+1000/1529+1000/209+1000/200+1000/32) for d in rxndiff],[rxndiff[d][5][0] for d in rxndiff])
 
-def run_ga_tRNA(tRNA_list,codon_list,elong_list,ensmbl_latency_dict,minRange,maxRange,objective='fast'):
+def run_ga_tRNA(tRNA_list,codon_list,elong_list,ensmbl_latency_dict,minRange,maxRange,objective='fast',ptRNA_red20=[]):
     num_cores = 16
 
     #### Compute fitness
@@ -528,24 +528,39 @@ def run_ga_tRNA(tRNA_list,codon_list,elong_list,ensmbl_latency_dict,minRange,max
     #### Mate k random pairs of 2 without replacement and renormalize
     k=5
     couples = np.random.choice(np.arange(len(parents)), size = (k,2),replace=False)
-    recombination_rate = 0.1
-    mutation_rate  = 0.05
+    recombination_rate = 0.2
+    mutation_rate  = 0.1
 
     recombined_children = list()
     recombined_children_elongt = list()
     for couple_index in couples:
         couple = parents[couple_index]
-        recombination_num = int(len(couple[0])*recombination_rate)
-        recombination_locs = np.random.choice(len(couple[0]),recombination_num)
-        recombination_values_0 = couple[0][recombination_locs] 
-        couple[0][recombination_locs] = couple[1][recombination_locs]
-        couple[1][recombination_locs] = recombination_values_0
-        
-        #### Mutate children
-        mutation_num = int(len(couple[0])*mutation_rate)
-        recombination_locs = np.random.choice(len(couple[0]),mutation_num)
-        couple[0][recombination_locs] = np.random.uniform(minRange,maxRange,mutation_num)
-        couple[1][recombination_locs] = np.random.uniform(minRange,maxRange,mutation_num)
+        if len(ptRNA_red20)>0:
+            tRNA_indices = np.argwhere(ptRNA_red20 != 0)
+            tRNA_indices = [indices[0] for indices in tRNA_indices]
+            recombination_num = int(len(tRNA_indices)*recombination_rate)
+            recombination_locs = np.random.choice(tRNA_indices,recombination_num)
+            recombination_values_0 = couple[0][recombination_locs] 
+            couple[0][recombination_locs] = couple[1][recombination_locs]
+            couple[1][recombination_locs] = recombination_values_0
+            
+            #### Mutate children
+            mutation_num = int(len(tRNA_indices)*mutation_rate)
+            recombination_locs = np.random.choice(tRNA_indices,mutation_num)
+            couple[0][recombination_locs] = np.random.uniform(minRange,maxRange,mutation_num)
+            couple[1][recombination_locs] = np.random.uniform(minRange,maxRange,mutation_num)
+        else:
+            recombination_num = int(len(couple[0])*recombination_rate)
+            recombination_locs = np.random.choice(len(couple[0]),recombination_num)
+            recombination_values_0 = couple[0][recombination_locs] 
+            couple[0][recombination_locs] = couple[1][recombination_locs]
+            couple[1][recombination_locs] = recombination_values_0
+            
+            #### Mutate children
+            mutation_num = int(len(couple[0])*mutation_rate)
+            recombination_locs = np.random.choice(len(couple[0]),mutation_num)
+            couple[0][recombination_locs] = np.random.uniform(minRange,maxRange,mutation_num)
+            couple[1][recombination_locs] = np.random.uniform(minRange,maxRange,mutation_num)
         
         ### Re-normalize each recombined children
         child_0 = couple[0]/np.sum(couple[0])
@@ -653,3 +668,141 @@ def calc_R2(x,y,y_hat):
     SS_err = np.sum((y-y_hat)**2) # Sum of squared errors
     SS_tot = np.sum((y-np.average(y))**2) #Sum of squares total (proportional to variance; n times larger than variance)
     return 1-SS_err/SS_tot
+
+
+
+def compute_codon_elongt(ptRNA, pCodon_len, ensmbl_latency_dict):
+    codon_tags = ['GGG', 'GGA', 'GGU', 'GGC', 'GAG', 'GAA', 'GAU', 'GAC', 'GUG', 'GUA', 'GUU', 'GUC', 'GCG', 'GCA', 'GCU', 'GCC', 'AGG', 'AGA', 'AGU', 'AGC', 'AAG', 'AAA', 'AAU', 'AAC', 'AUG', 'AUA', 'AUU', 'AUC', 'ACG', 'ACA', 'ACU', 'ACC', 'UGG', 'UGA', 'UGU', 'UGC', 'UAU', 'UAC', 'UUG', 'UUA', 'UUU', 'UUC', 'UCG', 'UCA', 'UCU', 'UCC', 'CGG', 'CGA', 'CGU', 'CGC', 'CAG', 'CAA', 'CAU', 'CAC', 'CUG', 'CUA', 'CUU', 'CUC', 'CCG', 'CCA', 'CCU', 'CCC']
+    pCodon_zeros= np.zeros(pCodon_len)
+    codon_elongation_latency = list()
+    for i in range(len(pCodon_zeros)):
+        pCodon_zeros= np.zeros(pCodon_len)
+        pCodon_zeros[i] = 1
+        codon_elongation_latency.append(computeElongationLatency(ptRNA,pCodon_zeros,ensmbl_latency_dict)[0][0])
+    codon_elongt = dict(zip(codon_tags, codon_elongation_latency))
+    return(codon_elongt)
+
+
+def compute_gene_elongt(codon_elongt, red20 = False):
+    from Bio import SeqIO
+    from Bio.Seq import Seq
+    import pandas as pd
+    from collections import Counter
+    import numpy as np
+
+    # Create dictionary of geneGo through each gene in the genome and break it down into codons
+    gene_map = get_gene_map()
+
+    #Create dictionary of gene name and its description, so that we can delete any genes that encode RNA for direct use
+    #(e.g., tRNA or rRNA) instead of mRNA
+    gene_map = reduceGeneMap_FullProteinsOnly(gene_map)
+    #Go through each gene and, for each codon in that gene, add its elongation latency and then compute
+    #the avg elongation latency for the gene. Remove hypothetical genes and other genes with nucleotide lenghts
+    #that aren't divisible by 3 (typically a predicted or disproven gene)
+    if red20:
+        gene_map = WTtoRed20Transcriptome(gene_map)
+    deleted = list()
+    gene_latency = {}
+    counter =0
+    for gene in gene_map:
+        elongt = 0
+        for codon in gene_map[gene]:
+            try:
+                elongt += codon_elongt[codon]
+            except:
+                counter +=1
+        elongt = elongt/(len(gene_map[gene]))
+        gene_latency[gene] = elongt
+    print('Inconsistency: reduceGeneMap_fullProteinsOnly didnt find a gene, ', counter)
+
+    print(len(gene_latency))
+    return gene_map, gene_latency
+
+
+def compute_transcript_distributions(gene_map, gene_latency):
+    codon_tags = ['GGG', 'GGA', 'GGU', 'GGC', 'GAG', 'GAA', 'GAU', 'GAC', 'GUG', 'GUA', 'GUU', 'GUC', 'GCG', 'GCA', 'GCU', 'GCC', 'AGG', 'AGA', 'AGU', 'AGC', 'AAG', 'AAA', 'AAU', 'AAC', 'AUG', 'AUA', 'AUU', 'AUC', 'ACG', 'ACA', 'ACU', 'ACC', 'UGG', 'UGA', 'UGU', 'UGC', 'UAU', 'UAC', 'UUG', 'UUA', 'UUU', 'UUC', 'UCG', 'UCA', 'UCU', 'UCC', 'CGG', 'CGA', 'CGU', 'CGC', 'CAG', 'CAA', 'CAU', 'CAC', 'CUG', 'CUA', 'CUU', 'CUC', 'CCG', 'CCA', 'CCU', 'CCC']
+    transcriptome = pd.read_csv('./data/tables/srep45303-s9.csv')
+    transcriptome = transcriptome.head(4196)
+    transcriptome_dict = dict(zip(transcriptome['gene_name'],transcriptome['baseMean']))
+    transcriptome_codon_dict = dict(zip(codon_tags,np.zeros(62)))
+    transcriptome_elongt = list()
+    failed_counter = 0
+
+    for gene in transcriptome_dict:
+        try:
+            for i in range(round(transcriptome_dict[gene])):
+                transcriptome_elongt.append(gene_latency[gene])
+                for codon in gene_map[gene]:
+                    if codon in transcriptome_codon_dict.keys():
+                        transcriptome_codon_dict[codon] +=1
+                    elif codon != "UAG" and codon != "UAA":
+                        print("Unknown codon in gene")
+        except:
+            failed_counter+=1
+    print('Missing genes in transcriptome_dict in compute_transcript_distributions: ', failed_counter)
+    pCodon_transcriptome = [transcriptome_codon_dict[gene]/sum(transcriptome_codon_dict.values()) for gene in transcriptome_codon_dict]
+    return pCodon_transcriptome, transcriptome_elongt
+
+def get_gene_map():
+    from Bio import SeqIO
+    from Bio.Seq import Seq
+    import pandas as pd
+    from collections import Counter
+    import numpy as np
+
+    # Go through each gene in the genome and break it down into codons
+    i = 0
+    gene_map = {}
+    codon_tags = ['GGG', 'GGA', 'GGU', 'GGC', 'GAG', 'GAA', 'GAU', 'GAC', 'GUG', 'GUA', 'GUU', 'GUC', 'GCG', 'GCA', 'GCU', 'GCC', 'AGG', 'AGA', 'AGU', 'AGC', 'AAG', 'AAA', 'AAU', 'AAC', 'AUG', 'AUA', 'AUU', 'AUC', 'ACG', 'ACA', 'ACU', 'ACC', 'UGG', 'UGA', 'UGU', 'UGC', 'UAU', 'UAC', 'UUG', 'UUA', 'UUU', 'UUC', 'UCG', 'UCA', 'UCU', 'UCC', 'CGG', 'CGA', 'CGU', 'CGC', 'CAG', 'CAA', 'CAU', 'CAC', 'CUG', 'CUA', 'CUU', 'CUC', 'CCG', 'CCA', 'CCU', 'CCC']
+    for seq_record in SeqIO.parse("/Users/akshay/Documents/TranslationDynamics/data/All_genes_of_E._coli_K-12_substr._MG1655-2.fa", "fasta"):
+        sequence = str(seq_record.seq).replace('T','U')
+        sequence = [sequence[i:i+3] for i in range(0, len(sequence), 3)]
+        gene_map[seq_record.id] = sequence
+
+    return gene_map
+
+def reduceGeneMap_FullProteinsOnly(gene_map):
+    codon_tags = ['GGG', 'GGA', 'GGU', 'GGC', 'GAG', 'GAA', 'GAU', 'GAC', 'GUG', 'GUA', 'GUU', 'GUC', 'GCG', 'GCA', 'GCU', 'GCC', 'AGG', 'AGA', 'AGU', 'AGC', 'AAG', 'AAA', 'AAU', 'AAC', 'AUG', 'AUA', 'AUU', 'AUC', 'ACG', 'ACA', 'ACU', 'ACC', 'UGG', 'UGA', 'UGU', 'UGC', 'UAU', 'UAC', 'UUG', 'UUA', 'UUU', 'UUC', 'UCG', 'UCA', 'UCU', 'UCC', 'CGG', 'CGA', 'CGU', 'CGC', 'CAG', 'CAA', 'CAU', 'CAC', 'CUG', 'CUA', 'CUU', 'CUC', 'CCG', 'CCA', 'CCU', 'CCC']
+    gene_type = pd.read_csv('/Users/akshay/Documents/TranslationDynamics/data/Gene_Name_from_All_genes_of_E._coli_K-12_substr._MG1655-2.txt',sep='\t')
+    gene_type_map = dict(zip(gene_type.AllGenes,gene_type.Geneproducts))
+
+    del_count = 0
+    for i,key in enumerate(gene_type_map.keys()):
+        try:
+            if('RNA' in gene_type_map[key]):
+               del gene_map[key]
+               del_count +=1
+        except:
+            nothing = 0
+    print("Removed ", del_count, " RNA species")
+    print(len(gene_map))
+
+    deleted = list()
+    for gene in gene_map:
+        gene_ok = True
+        for codon in gene_map[gene]:
+            if codon not in codon_tags and codon != "UAG" and codon != "UAA":
+                gene_ok = False
+        if not gene_ok:
+            deleted.append(gene)
+    for gene in deleted:
+        del gene_map[gene]
+
+    print("Removed ", len(deleted), " non-divisible by three genes")
+
+    return gene_map
+
+def WTtoRed20Transcriptome(gene_map):
+    Red20_codontable = pd.read_excel('/Users/akshay/Documents/tRNAShuffle/data/tables/codonValues_RED20.xlsx',header=None)
+    Red20_codon_dict = dict(zip(Red20_codontable[9],Red20_codontable[11]))
+    gene_map_red20  = {}
+    for gene in gene_map:
+        Red20_gene = []
+        for codon in gene_map[gene]:
+            if codon != "UAA" and codon != "UAG":
+                try:
+                    Red20_gene.append(Red20_codon_dict[codon])
+                except:
+                    print("Error: Check WTtoRed20Transcriptome method")
+        gene_map_red20[gene] = Red20_gene
+    return gene_map_red20
