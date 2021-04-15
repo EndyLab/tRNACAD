@@ -703,17 +703,57 @@ def compute_gene_elongt(codon_elongt, red20 = False):
         gene_map = WTtoRed20Transcriptome(gene_map)
     deleted = list()
     gene_latency = {}
+
+    codon_tags = ['GGG', 'GGA', 'GGU', 'GGC', 'GAG', 'GAA', 'GAU', 'GAC', 'GUG', 'GUA', 'GUU', 'GUC', 'GCG', 'GCA', 'GCU', 'GCC', 'AGG', 'AGA', 'AGU', 'AGC', 'AAG', 'AAA', 'AAU', 'AAC', 'AUG', 'AUA', 'AUU', 'AUC', 'ACG', 'ACA', 'ACU', 'ACC', 'UGG', 'UGA', 'UGU', 'UGC', 'UAU', 'UAC', 'UUG', 'UUA', 'UUU', 'UUC', 'UCG', 'UCA', 'UCU', 'UCC', 'CGG', 'CGA', 'CGU', 'CGC', 'CAG', 'CAA', 'CAU', 'CAC', 'CUG', 'CUA', 'CUU', 'CUC', 'CCG', 'CCA', 'CCU', 'CCC']
+    transcriptome = pd.read_csv('./data/tables/srep45303-s9.csv')
+    transcriptome = transcriptome.head(4196)
+    transcriptome_dict = dict(zip(transcriptome['id'],transcriptome['baseMean']))
+    transcriptome_codon_dict = dict(zip(codon_tags,np.zeros(62)))
+    transcriptome_elongt = list()
+    failed_counter = 0
+
+    transcriptome_name_dict = pd.read_csv('./data/tables/nameDictionary.csv')
+    transcriptome_name_dict = dict(zip(transcriptome_name_dict['mRNA_ID'],transcriptome_name_dict['gene_name']))
+    new_transcriptome_dict = {}
+
+    #print('transcriptome_dict keys, ', len(transcriptome_dict.keys()))
+    #print('transcriptome_name_dict keys, ', len(transcriptome_name_dict.keys()))
+
+    missingGene_counter = 0
+    missingGene_arr = []
+    for i,key in enumerate(transcriptome_dict.keys()):
+        try:
+            transcriptome_name_dict[key] = transcriptome_name_dict[key].replace('-','') #Some genes have an extra dash in middle
+        except:
+            missingGene_counter += 1 #null action
+            missingGene_arr.append(key)
+        new_transcriptome_dict[transcriptome_name_dict[key]] = transcriptome_dict[key]
+    print('Unique transcripts without a Gene identifier: ', missingGene_counter) #, missingGene_arr)
+    #print('new_transcriptome_dict keys, ', len(new_transcriptome_dict.keys()))
+
+
     counter =0
-    for gene in gene_map:
+    codon_counter = 0
+    for gene in new_transcriptome_dict:
         elongt = 0
-        for codon in gene_map[gene]:
-            try:
-                elongt += codon_elongt[codon]
-            except:
-                counter +=1
-        elongt = elongt/(len(gene_map[gene]))
-        gene_latency[gene] = elongt
-    print('Inconsistency: reduceGeneMap_fullProteinsOnly didnt find a gene, ', counter)
+        try:
+            coding_length = 0
+            for codon in gene_map[gene]:
+                if codon != "UAG" and codon != "UAA":
+                    try:
+                        elongt += codon_elongt[codon]
+                        coding_length +=1
+                    except:
+                        codon_counter += 1
+            elongt = elongt/coding_length
+            gene_latency[gene] = elongt
+        except:
+            counter +=1
+            #print(gene)
+
+    print('Sequences not available for # genes in Ecocyc DB: ', counter)
+    print('Inconsistency in codons: ', codon_counter)
+
 
     print(len(gene_latency))
     return gene_map, gene_latency
@@ -723,14 +763,25 @@ def compute_transcript_distributions(gene_map, gene_latency):
     codon_tags = ['GGG', 'GGA', 'GGU', 'GGC', 'GAG', 'GAA', 'GAU', 'GAC', 'GUG', 'GUA', 'GUU', 'GUC', 'GCG', 'GCA', 'GCU', 'GCC', 'AGG', 'AGA', 'AGU', 'AGC', 'AAG', 'AAA', 'AAU', 'AAC', 'AUG', 'AUA', 'AUU', 'AUC', 'ACG', 'ACA', 'ACU', 'ACC', 'UGG', 'UGA', 'UGU', 'UGC', 'UAU', 'UAC', 'UUG', 'UUA', 'UUU', 'UUC', 'UCG', 'UCA', 'UCU', 'UCC', 'CGG', 'CGA', 'CGU', 'CGC', 'CAG', 'CAA', 'CAU', 'CAC', 'CUG', 'CUA', 'CUU', 'CUC', 'CCG', 'CCA', 'CCU', 'CCC']
     transcriptome = pd.read_csv('./data/tables/srep45303-s9.csv')
     transcriptome = transcriptome.head(4196)
-    transcriptome_dict = dict(zip(transcriptome['gene_name'],transcriptome['baseMean']))
+    transcriptome_dict = dict(zip(transcriptome['id'],transcriptome['baseMean']))
     transcriptome_codon_dict = dict(zip(codon_tags,np.zeros(62)))
     transcriptome_elongt = list()
     failed_counter = 0
 
-    for gene in transcriptome_dict:
+    transcriptome_name_dict = pd.read_csv('./data/tables/nameDictionary.csv')
+    transcriptome_name_dict = dict(zip(transcriptome_name_dict['mRNA_ID'],transcriptome_name_dict['gene_name']))
+    new_transcriptome_dict = {}
+    for i,key in enumerate(transcriptome_dict.keys()):
         try:
-            for i in range(round(transcriptome_dict[gene])):
+            transcriptome_name_dict[key] = transcriptome_name_dict[key].replace('-','')
+        except:
+            a = 0 #null action
+        new_transcriptome_dict[transcriptome_name_dict[key]] = transcriptome_dict[key]
+
+
+    for gene in new_transcriptome_dict:
+        try:
+            for i in range(round(new_transcriptome_dict[gene])):
                 transcriptome_elongt.append(gene_latency[gene])
                 for codon in gene_map[gene]:
                     if codon in transcriptome_codon_dict.keys():
@@ -754,28 +805,21 @@ def get_gene_map():
     i = 0
     gene_map = {}
     codon_tags = ['GGG', 'GGA', 'GGU', 'GGC', 'GAG', 'GAA', 'GAU', 'GAC', 'GUG', 'GUA', 'GUU', 'GUC', 'GCG', 'GCA', 'GCU', 'GCC', 'AGG', 'AGA', 'AGU', 'AGC', 'AAG', 'AAA', 'AAU', 'AAC', 'AUG', 'AUA', 'AUU', 'AUC', 'ACG', 'ACA', 'ACU', 'ACC', 'UGG', 'UGA', 'UGU', 'UGC', 'UAU', 'UAC', 'UUG', 'UUA', 'UUU', 'UUC', 'UCG', 'UCA', 'UCU', 'UCC', 'CGG', 'CGA', 'CGU', 'CGC', 'CAG', 'CAA', 'CAU', 'CAC', 'CUG', 'CUA', 'CUU', 'CUC', 'CCG', 'CCA', 'CCU', 'CCC']
-    for seq_record in SeqIO.parse("/Users/akshay/Documents/TranslationDynamics/data/All_genes_of_E._coli_K-12_substr._MG1655-2.fa", "fasta"):
-        sequence = str(seq_record.seq).replace('T','U')
-        sequence = [sequence[i:i+3] for i in range(0, len(sequence), 3)]
-        gene_map[seq_record.id] = sequence
+    genes = pd.read_csv('./data/tables/__All_polypeptides_of_E._coli_K-12_substr._MG1655.txt',delimiter='\t')
+    genes = genes[genes['Names'].notnull()]
+    print('Number of polypeptides reported: ', len(genes))
+    for i,name in genes.iterrows():
+        gene_names = name['Names'].split(sep=' // ')
+        for gene in gene_names:
+            sequence = str(name['Sequence - DNA sequence']).replace('T','U')
+            sequence = [sequence[i:i+3] for i in range(0, len(sequence), 3)]
+            gene_map[gene] = sequence
 
+    print('Returned gene map of length ',  len(gene_map))
     return gene_map
 
 def reduceGeneMap_FullProteinsOnly(gene_map):
     codon_tags = ['GGG', 'GGA', 'GGU', 'GGC', 'GAG', 'GAA', 'GAU', 'GAC', 'GUG', 'GUA', 'GUU', 'GUC', 'GCG', 'GCA', 'GCU', 'GCC', 'AGG', 'AGA', 'AGU', 'AGC', 'AAG', 'AAA', 'AAU', 'AAC', 'AUG', 'AUA', 'AUU', 'AUC', 'ACG', 'ACA', 'ACU', 'ACC', 'UGG', 'UGA', 'UGU', 'UGC', 'UAU', 'UAC', 'UUG', 'UUA', 'UUU', 'UUC', 'UCG', 'UCA', 'UCU', 'UCC', 'CGG', 'CGA', 'CGU', 'CGC', 'CAG', 'CAA', 'CAU', 'CAC', 'CUG', 'CUA', 'CUU', 'CUC', 'CCG', 'CCA', 'CCU', 'CCC']
-    gene_type = pd.read_csv('/Users/akshay/Documents/TranslationDynamics/data/Gene_Name_from_All_genes_of_E._coli_K-12_substr._MG1655-2.txt',sep='\t')
-    gene_type_map = dict(zip(gene_type.AllGenes,gene_type.Geneproducts))
-
-    del_count = 0
-    for i,key in enumerate(gene_type_map.keys()):
-        try:
-            if('RNA' in gene_type_map[key]):
-               del gene_map[key]
-               del_count +=1
-        except:
-            nothing = 0
-    print("Removed ", del_count, " RNA species")
-    print(len(gene_map))
 
     deleted = list()
     for gene in gene_map:
@@ -789,6 +833,7 @@ def reduceGeneMap_FullProteinsOnly(gene_map):
         del gene_map[gene]
 
     print("Removed ", len(deleted), " non-divisible by three genes")
+    print(deleted)
 
     return gene_map
 
@@ -806,3 +851,22 @@ def WTtoRed20Transcriptome(gene_map):
                     print("Error: Check WTtoRed20Transcriptome method")
         gene_map_red20[gene] = Red20_gene
     return gene_map_red20
+
+def computeEffectiveGrowthRateShift(percentShift):
+    gr_list = [0.6,1.0,1.5,2.0,2.5,3.0]
+    y_model,SS_err,_,_,_ = np.polyfit(np.log(gr_list),([12,15,18,19,20,21]),1,full=True)
+
+    gr_list_extended = [0.6,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.5,6.0,6.5,7.0]
+    y_hat = y_model[0]*np.log(gr_list)+y_model[1]
+    x_sweep_i = np.linspace(min(gr_list_extended),max(gr_list_extended),640)
+    y_hat_sweep_i =  y_model[0]*np.log(x_sweep_i)+y_model[1]
+    
+    effectiveShift = 0
+    gr3 = x_sweep_i[240]
+    gr3_latency = y_hat_sweep_i[240]
+    fit = list()
+    for i,gr in enumerate(x_sweep_i):
+        fit.append(percentShift - gr3_latency/y_hat_sweep_i[i])
+    
+    return x_sweep_i[np.argmin(np.abs(fit))], (gr3-(x_sweep_i[np.argmin(np.abs(fit))]))/gr3
+
