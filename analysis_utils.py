@@ -794,6 +794,88 @@ def compute_transcript_distributions(gene_map, gene_latency):
     pCodon_transcriptome = [transcriptome_codon_dict[gene]/sum(transcriptome_codon_dict.values()) for gene in transcriptome_codon_dict]
     return pCodon_transcriptome, transcriptome_elongt
 
+
+def compute_transcript_distributions_subset(gene_map, gene_latency,max_latency):
+    codon_tags = ['GGG', 'GGA', 'GGU', 'GGC', 'GAG', 'GAA', 'GAU', 'GAC', 'GUG', 'GUA', 'GUU', 'GUC', 'GCG', 'GCA', 'GCU', 'GCC', 'AGG', 'AGA', 'AGU', 'AGC', 'AAG', 'AAA', 'AAU', 'AAC', 'AUG', 'AUA', 'AUU', 'AUC', 'ACG', 'ACA', 'ACU', 'ACC', 'UGG', 'UGA', 'UGU', 'UGC', 'UAU', 'UAC', 'UUG', 'UUA', 'UUU', 'UUC', 'UCG', 'UCA', 'UCU', 'UCC', 'CGG', 'CGA', 'CGU', 'CGC', 'CAG', 'CAA', 'CAU', 'CAC', 'CUG', 'CUA', 'CUU', 'CUC', 'CCG', 'CCA', 'CCU', 'CCC']
+    transcriptome = pd.read_csv('./data/tables/srep45303-s9.csv')
+    transcriptome = transcriptome.head(4196)
+    transcriptome_dict = dict(zip(transcriptome['id'],transcriptome['baseMean']))
+    transcriptome_codon_dict = dict(zip(codon_tags,np.zeros(62)))
+    transcriptome_elongt = list()
+    failed_counter = 0
+
+    transcriptome_name_dict = pd.read_csv('./data/tables/nameDictionary.csv')
+    transcriptome_name_dict = dict(zip(transcriptome_name_dict['mRNA_ID'],transcriptome_name_dict['gene_name']))
+    new_transcriptome_dict = {}
+    for i,key in enumerate(transcriptome_dict.keys()):
+        try:
+            transcriptome_name_dict[key] = transcriptome_name_dict[key].replace('-','')
+        except:
+            a = 0 #null action
+        new_transcriptome_dict[transcriptome_name_dict[key]] = transcriptome_dict[key]
+
+    gene_list = list()
+    for gene in new_transcriptome_dict:
+        try:
+            if gene_latency[gene] < max_latency:
+                for i in range(round(new_transcriptome_dict[gene])):
+                    transcriptome_elongt.append(gene_latency[gene])
+                    gene_list.append(gene)
+                    for codon in gene_map[gene]:
+                        if codon in transcriptome_codon_dict.keys():
+                            transcriptome_codon_dict[codon] +=1
+                        elif codon != "UAG" and codon != "UAA":
+                            print("Unknown codon in gene")
+        except:
+            failed_counter+=1
+    print('Missing genes in transcriptome_dict in compute_transcript_distributions: ', failed_counter)
+    pCodon_transcriptome = [transcriptome_codon_dict[gene]/sum(transcriptome_codon_dict.values()) for gene in transcriptome_codon_dict]
+    return pCodon_transcriptome, transcriptome_elongt,gene_list
+
+def singlegene_to_genemap(gene_filepath):
+    codon_tags = ['GGG', 'GGA', 'GGU', 'GGC', 'GAG', 'GAA', 'GAU', 'GAC', 'GUG', 'GUA', 'GUU', 'GUC', 'GCG', 'GCA', 'GCU', 'GCC', 'AGG', 'AGA', 'AGU', 'AGC', 'AAG', 'AAA', 'AAU', 'AAC', 'AUG', 'AUA', 'AUU', 'AUC', 'ACG', 'ACA', 'ACU', 'ACC', 'UGG', 'UGA', 'UGU', 'UGC', 'UAU', 'UAC', 'UUG', 'UUA', 'UUU', 'UUC', 'UCG', 'UCA', 'UCU', 'UCC', 'CGG', 'CGA', 'CGU', 'CGC', 'CAG', 'CAA', 'CAU', 'CAC', 'CUG', 'CUA', 'CUU', 'CUC', 'CCG', 'CCA', 'CCU', 'CCC']
+    gene_map = {}
+    gene = pd.read_csv(gene_filepath)
+    try:
+        for i,row in gene.iterrows():
+            gene_name = str(row['Name'])
+            sequence = str(row['Sequence'])
+    except:
+        print('Error: Formatting of file is incorrect')
+    try:
+        sequence = sequence.replace('T','U')
+        sequence = [sequence[i:i+3] for i in range(0, len(sequence), 3)]
+    except:
+        print('Error: Sequence is not a multiple of three nucleotides')
+    gene_map[gene_name] = sequence
+
+    transcriptome_codon_dict = dict(zip(codon_tags,np.zeros(62)))
+
+    for codon in sequence:
+        if codon in transcriptome_codon_dict.keys():
+            transcriptome_codon_dict[codon] +=1
+        elif codon != "UAG" and codon != "UAA":
+            print(codon)
+            print("Unknown codon in gene")
+
+    pCodon_gene = [transcriptome_codon_dict[codon]/sum(transcriptome_codon_dict.values()) for codon in transcriptome_codon_dict]
+    return gene_map, pCodon_gene
+
+def compute_gene_elongt(gene_map,codon_elongt):
+    elongt = 0
+    coding_length = 0
+    codon_counter=0
+    for codon in gene_map:
+        if codon != "UAG" and codon != "UAA":
+            try:
+                elongt += codon_elongt[codon]
+                coding_length +=1
+            except:
+                codon_counter += 1
+                print('Error with some codons read while computing gene elongt')
+    elongt = elongt/coding_length
+    return elongt
+
 def get_gene_map():
     from Bio import SeqIO
     from Bio.Seq import Seq
@@ -809,6 +891,7 @@ def get_gene_map():
     genes = genes[genes['Names'].notnull()]
     print('Number of polypeptides reported: ', len(genes))
     for i,name in genes.iterrows():
+        #Each gene might have multiple names; here we're constructing a map relating gene names to sequences (i.e., there will be multiple names for a single sequence)
         gene_names = name['Names'].split(sep=' // ')
         for gene in gene_names:
             sequence = str(name['Sequence - DNA sequence']).replace('T','U')
@@ -868,5 +951,5 @@ def computeEffectiveGrowthRateShift(percentShift):
     for i,gr in enumerate(x_sweep_i):
         fit.append(percentShift - gr3_latency/y_hat_sweep_i[i])
     
-    return x_sweep_i[np.argmin(np.abs(fit))], (gr3-(x_sweep_i[np.argmin(np.abs(fit))]))/gr3
+    return x_sweep_i[np.argmin(np.abs(fit))], (gr3-(x_sweep_i[np.argmin(np.abs(fit))]))
 
