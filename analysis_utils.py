@@ -523,6 +523,7 @@ def run_ga_tRNA(tRNA_list,codon_list,elong_list,ensmbl_latency_dict,minRange,max
     #### Choose parents based on weighting fitness
     parent_indices = np.argpartition(fitness, n)[-n:]
     tRNA_list=np.array(tRNA_list)
+
     parents = tRNA_list[parent_indices]
 
     #### Mate k random pairs of 2 without replacement and renormalize
@@ -544,6 +545,7 @@ def run_ga_tRNA(tRNA_list,codon_list,elong_list,ensmbl_latency_dict,minRange,max
             couple[0][recombination_locs] = couple[1][recombination_locs]
             couple[1][recombination_locs] = recombination_values_0
             
+
             #### Mutate children
             mutation_num = int(len(tRNA_indices)*mutation_rate)
             recombination_locs = np.random.choice(tRNA_indices,mutation_num)
@@ -555,17 +557,41 @@ def run_ga_tRNA(tRNA_list,codon_list,elong_list,ensmbl_latency_dict,minRange,max
             recombination_values_0 = couple[0][recombination_locs] 
             couple[0][recombination_locs] = couple[1][recombination_locs]
             couple[1][recombination_locs] = recombination_values_0
-            
             #### Mutate children
             mutation_num = int(len(couple[0])*mutation_rate)
             recombination_locs = np.random.choice(len(couple[0]),mutation_num)
             couple[0][recombination_locs] = np.random.uniform(minRange,maxRange,mutation_num)
             couple[1][recombination_locs] = np.random.uniform(minRange,maxRange,mutation_num)
-        
-        ### Re-normalize each recombined children
-        child_0 = couple[0]/np.sum(couple[0])
-        child_1 = couple[1]/np.sum(couple[1])
-        
+
+        ##########
+        ### Re-normalize each recombined children while ensuring no value > maxRange or < minRange.
+        iter = 0
+        #Have to re-normalize in a loop to make sure overall == 1, for the edge case where there's so many max values that sum > 1
+        #Set up as a do while loop
+        while True:
+            child_0 = couple[0]/np.sum(couple[0])
+            iter +=1
+            child_0 = np.where(child_0>maxRange, maxRange, child_0)
+            child_0 = np.where((child_0<minRange)&(child_0>0), minRange, child_0)
+            child_0_indices = np.where((child_0>minRange) & (child_0<maxRange))
+            child_0_minmaxindices = np.where((child_0==minRange) | (child_0==maxRange))
+            #print("child",child_0, child_0_indices,child_0[child_0_indices],'minmax ',(child_0_minmaxindices), sum(child_0[child_0_minmaxindices]))
+            child_0[child_0_indices] = (child_0[child_0_indices]/sum(child_0[child_0_indices]))*(1-sum(child_0[child_0_minmaxindices]))
+            #print(child_0[child_0_indices],"tota1l: ", sum(child_0[child_0_indices]), ' tottot', sum(child_0))
+            #print('iter', iter)
+            if ((sum(child_0) - 1 < 0.99) or (sum(child_0) - 1 > 1.01)):
+                break
+        while True:
+            child_1 = couple[1]/np.sum(couple[1])
+            child_1 = np.where(child_1>maxRange, maxRange, child_1)
+            child_1 = np.where((child_1<minRange)&(child_0>0), minRange, child_1)
+            child_1_indices = np.where((child_1>minRange) & (child_1<maxRange))
+            child_1_minmaxindices = np.where((child_1==minRange) | (child_1==maxRange))
+            child_1[child_1_indices] = (child_1[child_1_indices]/sum(child_1[child_1_indices]))*(1-sum(child_1[child_1_minmaxindices]))
+            if ((sum(child_1) - 1 < 0.99) or (sum(child_1) - 1 > 1.01)):
+                break
+
+        ############
         ### Add children to list
         recombined_children.append(list(child_0))
         recombined_children.append(list(child_1))
@@ -577,7 +603,6 @@ def run_ga_tRNA(tRNA_list,codon_list,elong_list,ensmbl_latency_dict,minRange,max
         recombined_children_elongt.append(items[0][0])
 #    del(a)
 #    gc.collect()
-    
     #### Have recombined children and their elong_t replaced culled candidates
     tRNA_list[cull_indices] = recombined_children
     elong_list[cull_indices] = recombined_children_elongt
@@ -861,7 +886,7 @@ def singlegene_to_genemap(gene_filepath):
     pCodon_gene = [transcriptome_codon_dict[codon]/sum(transcriptome_codon_dict.values()) for codon in transcriptome_codon_dict]
     return gene_map, pCodon_gene
 
-def compute_gene_elongt(gene_map,codon_elongt):
+def compute_gene_elongt_genemap(gene_map,codon_elongt):
     elongt = 0
     coding_length = 0
     codon_counter=0
