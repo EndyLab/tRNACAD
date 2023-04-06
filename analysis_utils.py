@@ -246,6 +246,7 @@ def computeNRLatency(NR_scaling = {'k1r':718,'k2f':1475,'k2r_nr':1120,'k3_nr':6,
     return np.mean(dwelltime_nr_fail)
 
 def cognateDistrib(ptRNA,pCodon, extra = False,extra2=False):
+    #np.random.seed(0)
 
     ptRNA = np.divide(ptRNA,sum(ptRNA))
     pCodon= np.divide(pCodon, sum(pCodon))
@@ -708,12 +709,13 @@ def compute_codon_elongt(ptRNA, pCodon_len, ensmbl_latency_dict):
     return(codon_elongt)
 
 
-def compute_gene_elongt(codon_elongt, red20 = False):
+def compute_gene_elongt(codon_elongt, red20 = False,stratify='none'):
     from Bio import SeqIO
     from Bio.Seq import Seq
     import pandas as pd
     from collections import Counter
     import numpy as np
+    import sys
 
     # Create dictionary of geneGo through each gene in the genome and break it down into codons
     gene_map = get_gene_map()
@@ -733,10 +735,43 @@ def compute_gene_elongt(codon_elongt, red20 = False):
     transcriptome = pd.read_csv('./data/tables/srep45303-s9.csv')
     transcriptome = transcriptome.head(4196)
     transcriptome_dict = dict(zip(transcriptome['id'],transcriptome['baseMean']))
+
+    if stratify == 'high':
+        print('high')
+        # Calculate the cutoff for the top 10%
+        cutoff = sorted(transcriptome_dict.values(), reverse=True)[int(len(transcriptome_dict) * 0.1)]
+
+        # Create a new dictionary with only the top 10% of values
+        transcriptome_dict = {k: v for k, v in transcriptome_dict.items() if v >= cutoff}
+
+    elif stratify == 'low':
+        print('low')
+        # Calculate the cutoff for the bottom 10%
+        cutoff = sorted(transcriptome_dict.values(), reverse=False)[int(len(transcriptome_dict) * 0.1)]
+
+        # Create a new dictionary with only the bottom 10% of values
+        transcriptome_dict = {k: v for k, v in transcriptome_dict.items() if v <= cutoff}
+
+    elif stratify == 'middle':
+        print('middle')
+        # Calculate the cutoff for the middle 80%
+        cutoff_low = sorted(transcriptome_dict.values(), reverse=False)[int(len(transcriptome_dict) * 0.1)]
+        cutoff_high = sorted(transcriptome_dict.values(), reverse=True)[int(len(transcriptome_dict) * 0.1)]
+
+        # Create a new dictionary with only the middle 80% of values
+        transcriptome_dict = {k: v for k, v in transcriptome_dict.items() if v >= cutoff_low and v <=cutoff_high}
+    
+    elif stratify == 'highest':
+        highest_expressing = max(transcriptome_dict, key=transcriptome_dict.get)
+        transcriptome_dict = {highest_expressing: transcriptome_dict[highest_expressing]}
+
+    elif stratify != 'none':
+        print('Error, incorrect stratification given')
+        raise
+
     transcriptome_codon_dict = dict(zip(codon_tags,np.zeros(62)))
     transcriptome_elongt = list()
     failed_counter = 0
-
     transcriptome_name_dict = pd.read_csv('./data/tables/nameDictionary.csv')
     transcriptome_name_dict = dict(zip(transcriptome_name_dict['mRNA_ID'],transcriptome_name_dict['gene_name']))
     new_transcriptome_dict = {}
