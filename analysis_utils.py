@@ -150,7 +150,7 @@ def transportRxnCalc(ptRNA, pCodon, ensmbl_latency_dict, bias=1):
     search_list = list()
     
     p_codon_count_hist_weighted_avg=cognateDistrib(ptRNA,pCodon)
-    
+
     transport_vals_list = list()
     reaction_vals_list = list()
     search_vals_list = list()
@@ -368,6 +368,22 @@ def cognateDistrib(ptRNA,pCodon, extra = False,extra2=False):
 
     return p_codon_count_hist_weighted_avg
 
+def neighbors(codon):
+    neighbor_codons = list()
+    bases = ['A', 'U', 'C', 'G']
+    for base in bases:
+        bases = ['A', 'U', 'C', 'G']
+        if codon[0] == base:
+            sub_bases = [i for i in bases if i!=base]
+            for sub_base in sub_bases:
+                neighbor_codons.append(sub_base+codon[1:])
+                
+        bases = ['A', 'U', 'C', 'G']
+        if codon[1] == base:
+            sub_bases = [i for i in bases if i!=base]
+            for sub_base in sub_bases:
+                neighbor_codons.append(codon[0]+sub_base+codon[2])
+    return neighbor_codons
 
 def nearcognateDistrib(ptRNA,pCodon):
 
@@ -707,7 +723,6 @@ def compute_codon_elongt(ptRNA, pCodon_len, ensmbl_latency_dict):
         codon_elongation_latency.append(computeElongationLatency(ptRNA,pCodon_zeros,ensmbl_latency_dict)[0][0])
     codon_elongt = dict(zip(codon_tags, codon_elongation_latency))
     return(codon_elongt)
-
 
 def compute_gene_elongt(codon_elongt, red20 = False,stratify='none'):
     from Bio import SeqIO
