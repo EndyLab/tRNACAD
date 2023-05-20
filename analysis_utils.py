@@ -1028,11 +1028,16 @@ def computeEffectiveGrowthRateShift(percentShift):
     
     return x_sweep_i[np.argmin(np.abs(fit))], (gr3-(x_sweep_i[np.argmin(np.abs(fit))]))
 
-def perturb(ptRNA,tRNA,tRNA_sorted, pCodon,ensmbl_latency_dict,pos,delta,skip=False,pCodon_type='normal'):
+def perturb(ptRNA,tRNA,tRNA_sorted, pCodon,ensmbl_latency_dict,pos,delta,skip=False,pCodon_type='normal',RED20=False):
     num_cores = 16
 
-    ptRNA_maxval = 0.08523592085132133 #max(gr25_ptRNA)
-    ptRNA_minval = 0.0015220700152021665 #min(gr25_ptRNA)
+    if RED20 == False:
+        ptRNA_maxval = 0.08523592085132133 #max(gr25_ptRNA)
+        ptRNA_minval = 0.0015220700152021665 #min(gr25_ptRNA)
+    else:
+        ptRNA_maxval = 0.12824427 #max(ptRNA_RED20)
+        ptRNA_minval = 0.01221374 #min(ptRNA_RED20)
+
     ptRNA_dict = dict(zip(tRNA, ptRNA))
     tRNA_1 = tRNA_sorted[pos]
     tRNA_0 = tRNA_sorted[pos-1]
@@ -1064,11 +1069,13 @@ def perturb(ptRNA,tRNA,tRNA_sorted, pCodon,ensmbl_latency_dict,pos,delta,skip=Fa
     #    arr.append(computeElongationLatency(np.array(list(ptRNA_dict.values())), pCodon, ensmbl_latency_dict)[0][0])
 
     #Parallel implementation
-    ensmbl_latency_dict_list=np.load('./data/ensmbl_latency_dict_list100.npy',allow_pickle=True )
+    ensmbl_latency_dict_list=np.load('./data/ensmbl_latency_dict_list10.npy',allow_pickle=True )
     if pCodon_type == 'highest':
-        pCodon_WT_list=np.load('./data/pCodon_highestGene_list100.npy',allow_pickle=True )
+        pCodon_WT_list=np.load('./data/pCodon_highestGene_list10.npy',allow_pickle=True )
+    elif pCodon_type == 'RED20GFP':
+        pCodon_WT_list = np.load('./data/pCodon_RED20GFP_list10.npy',allow_pickle=True)
     else:
-        pCodon_WT_list=np.load('./data/pCodon_WT_list100.npy',allow_pickle=True )
+        pCodon_WT_list=np.load('./data/pCodon_WT_list10.npy',allow_pickle=True )
 
     m=300
     if skip == True:
@@ -1082,10 +1089,13 @@ def perturb(ptRNA,tRNA,tRNA_sorted, pCodon,ensmbl_latency_dict,pos,delta,skip=Fa
     print("replicates run: ", len(arr))
     return np.average(arr), np.array(list(ptRNA_dict.values())), np.std(arr)/np.sqrt(len(ensmbl_latency_dict_list)*m)
 
-def monotonicity(ptRNA):
-    if (len(ptRNA)==40):
-        return (sum(np.diff(ptRNA) <= 0)/40)*100
+def monotonicity(ptRNA,RED20=False):
+    tRNA_num=40
+    if RED20:
+        tRNA_num=20
+    if (len(ptRNA)==tRNA_num):
+        return (sum(np.diff(ptRNA) <= 0)/(tRNA_num-1))*100
     else:
-        raise ValueError("Length of ptRNA is not 40")
-        print("Length of ptRNA is not 40")
+        raise ValueError("Length of ptRNA is not what it should be")
+        print("Length of ptRNA is not what it should be")
 
